@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,12 +19,16 @@ type RecordLog struct {
 	ContainerName string
 	Log           string
 }
+type StreamOpts struct {
+	Name string
+	ID   string
+}
 
 var recordChan chan RecordLog
 
-func streamClog(ctx context.Context, dc *client.Client, cn container.Summary, cancel context.CancelFunc) {
+func streamClog(ctx context.Context, dc *client.Client, cn StreamOpts) {
 	containerID := cn.ID
-	name := strings.TrimPrefix(cn.Names[0], "/")
+	name := cn.Name
 	logOptions := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -44,7 +47,6 @@ func streamClog(ctx context.Context, dc *client.Client, cn container.Summary, ca
 	scanner := bufio.NewScanner(logReader)
 	for scanner.Scan() {
 		line := scanner.Text()
-		fmt.Printf("[%s] %s: %s\n", time.Now().Format(time.RFC3339Nano), name, line)
 		recordChan <- RecordLog{
 			ContainerName: name,
 			Log:           line,
@@ -59,68 +61,45 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 	tracked := make(map[string]context.CancelFunc)
 	var mu sync.Mutex
 
-	// Initial scan for running containers
-	containers, err := dc.ContainerList(ctx, container.ListOptions{})
-	if err != nil {
-		log.Printf("Failed to list containers: %v\n", err)
-	} else {
-		for _, cn := range containers {
-			mu.Lock()
-			if _, exists := tracked[cn.ID]; !exists {
-				name := cn.Names[0]
-				name = strings.TrimPrefix(name, "/")
-				containerCtx, cancel := context.WithCancel(context.Background())
-				go streamClog(containerCtx, dc, container.Summary{
-					ID:    cn.ID,
-					Names: []string{name},
-				}, cancel)
-				tracked[cn.ID] = cancel
-				log.Printf("Started tracking logs for running container: %s\n", name)
-			}
-			mu.Unlock()
-		}
-	}
-
-	eventCh, errCh := dc.Events(ctx, events.ListOptions{})
+	eventChan, errChan := dc.Events(ctx, events.ListOptions{})
 
 	for {
 		select {
-		case event := <-eventCh:
-			if event.Type == "container" && (event.Action == "start" || event.Action == "create") {
-				containerID := event.Actor.ID
+		case err := <-errChan:
+			fmt.Printf("failed to process docker event %s", err.Error())
+			continue
+		case event := <-eventChan:
+			if event.Type == "container" {
 				mu.Lock()
-				if _, exists := tracked[containerID]; !exists {
-					containerJSON, err := dc.ContainerInspect(ctx, containerID)
-					if err != nil {
-						log.Printf("Failed to inspect container %s: %v\n", containerID, err)
-						mu.Unlock()
-						continue
+				switch event.Action {
+				case "start":
+					if _, ok := tracked[event.Actor.ID]; !ok {
+						containerCtx, cancel := context.WithCancel(ctx)
+						tracked[event.Actor.ID] = cancel
+						go streamClog(containerCtx, dc, StreamOpts{
+							Name: event.Actor.Attributes["name"],
+							ID:   event.Actor.ID,
+						})
 					}
-					name := containerJSON.Name
-					name = strings.TrimPrefix(name, "/")
-					containerCtx, cancel := context.WithCancel(context.Background())
-					go streamClog(containerCtx, dc, container.Summary{
-						ID:    containerID,
-						Names: []string{name},
-					}, cancel)
-					tracked[containerID] = cancel
-					log.Printf("Started tracking logs for container: %s\n", name)
+				case "die", "stop", "kill":
+					if cancel, exists := tracked[event.Actor.ID]; exists {
+						fmt.Printf("container %s log stopped", event.Actor.ID)
+						cancel()
+						delete(tracked, event.Actor.ID)
+					}
 				}
 				mu.Unlock()
 			}
-			if event.Type == "container" && (event.Action == "die" || event.Action == "stop") {
-				containerID := event.Actor.ID
-				mu.Lock()
-				if cancel, exists := tracked[containerID]; exists {
-					cancel()
-					delete(tracked, containerID)
-					log.Printf("Stopped tracking logs for container: %s\n", containerID)
-				}
-				mu.Unlock()
+
+		case <-ctx.Done():
+			mu.Lock()
+			for _, cancel := range tracked {
+				cancel()
 			}
-		case err := <-errCh:
-			log.Printf("Error from Docker events stream: %v\n", err)
-			time.Sleep(2 * time.Second)
+			tracked = make(map[string]context.CancelFunc)
+			mu.Unlock()
+			fmt.Println("Context cancelled, stopping event watching")
+			return
 		}
 	}
 }
@@ -128,7 +107,6 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 func recordLogs() {
 	openedFiles := make(map[string]*os.File)
 	for record := range recordChan {
-		log.Printf("Recording log for container %s\n", record.ContainerName)
 		var file *os.File
 		f, ok := openedFiles[record.ContainerName]
 		if !ok {
@@ -145,7 +123,7 @@ func recordLogs() {
 			f = file
 		}
 		file = f
-		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.RFC3339Nano), record.Log); err != nil {
+		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateOnly), record.Log); err != nil {
 			log.Printf("Failed to write log for %s: %v\n", record.ContainerName, err)
 			continue
 		}
@@ -153,7 +131,6 @@ func recordLogs() {
 			log.Printf("Failed to sync log file for %s: %v\n", record.ContainerName, err)
 			continue
 		}
-		log.Printf("Log for container %s recorded successfully\n", record.ContainerName)
 	}
 	for name, file := range openedFiles {
 		if err := file.Close(); err != nil {
