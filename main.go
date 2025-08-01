@@ -12,14 +12,19 @@ import (
 	"time"
 )
 
-func streamClog(ctx context.Context, wg *sync.WaitGroup, dc *client.Client, containerID, name string) {
-	defer wg.Done()
-
+func streamClog(ctx context.Context, wg *sync.WaitGroup, dc *client.Client, cn container.Summary, cancel context.CancelFunc) {
+	defer func() {
+		wg.Done()
+		cancel()
+	}()
+	containerID := cn.ID
+	name := cn.Names[0]
 	logOptions := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Timestamps: true,
 		Follow:     true,
+		Tail:       "0",
 	}
 
 	logReader, err := dc.ContainerLogs(ctx, containerID, logOptions)
@@ -49,7 +54,7 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 
 	for {
 		containers, err := dc.ContainerList(ctx, container.ListOptions{
-			All:    true,
+			All:    false,
 			Latest: true,
 		})
 		if err != nil {
@@ -58,18 +63,27 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 			continue
 		}
 
-		mu.Lock()
 		wg := sync.WaitGroup{}
 
 		for _, cn := range containers {
-			if !tracked[cn.ID] {
-				tracked[cn.ID] = true
+			mu.Lock()
+			if _, exists := tracked[cn.ID]; !exists {
+				containerCtx, cancel := context.WithCancel(context.Background())
 				wg.Add(1)
-				go streamClog(ctx, &wg, dc, cn.ID, cn.Names[0])
+
+				go streamClog(containerCtx, &wg, dc, cn, cancel)
+				tracked[cn.ID] = true
+				go func(id, name string, ctx context.Context) {
+					<-ctx.Done()
+					mu.Lock()
+					delete(tracked, id)
+					mu.Unlock()
+					log.Printf("Removed container from tracking: %s\n", name)
+				}(cn.ID, cn.Names[0], containerCtx)
 			}
+			mu.Unlock()
 		}
-		mu.Unlock()
-		fmt.Println("new containers tracked")
+		fmt.Printf("tracking new containers, current containers count %d \n", len(tracked))
 		time.Sleep(5 * time.Second)
 	}
 }
