@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
+	"net/http"
 	"os"
 	"path"
 	"regexp"
@@ -238,25 +238,12 @@ func cleanupOldFiles(openedFiles map[string]*os.File) {
 }
 
 func healthCheck() {
-	ln, err := net.Listen("tcp", ":8080")
-	if err != nil {
-		fmt.Printf("failed to listen to 8080 for health check %s\n", err.Error())
-		os.Exit(1)
-	}
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			fmt.Printf("failed to accept connection %s\n", err.Error())
-			os.Exit(1)
-		}
-		go func() {
-			_, err := conn.Write([]byte("healthy\n"))
-			if err != nil {
-				fmt.Printf("failed to send health message %s\n", err.Error())
-				os.Exit(1)
-			}
-			conn.Close()
-		}()
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("healthy"))
+	})
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Println("failed to start healthpeak")
 	}
 }
 
@@ -268,8 +255,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	go watchContainers(ctx, dc)
 	go recordLogs()
 	go healthCheck()
-	select {}
+	watchContainers(ctx, dc)
 }

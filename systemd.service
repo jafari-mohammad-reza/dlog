@@ -1,0 +1,34 @@
+[Unit]
+Description=dlog
+After=network.target docker.service
+Wants=network.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=your-app-user
+Group=your-app-group
+WorkingDirectory=/opt/your-app
+ExecStart=/opt/your-app/your-binary
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StartLimitInterval=0
+
+ExecStartPost=/bin/sleep 5
+ExecStartPost=/usr/bin/curl -f http://localhost:8080/health || exit 1
+
+
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+Environment=LOG_LEVEL=info
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/dlog/logs
+
+MemoryLimit=512M
+CPUQuota=150%
+
+[Install]
+WantedBy=multi-user.target
