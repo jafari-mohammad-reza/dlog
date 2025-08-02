@@ -111,7 +111,7 @@ func recordLogs() {
 	openedFiles := make(map[string]*os.File)
 	loadLog(openedFiles)
 	go func() {
-		tk := time.NewTicker(time.Minute * 10)
+		tk := time.NewTicker(time.Hour * 12)
 		for {
 			select {
 			case <-tk.C:
@@ -136,7 +136,7 @@ func recordLogs() {
 			f = file
 		}
 		file = f
-		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateOnly), record.Log); err != nil {
+		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateTime), record.Log); err != nil {
 			log.Printf("Failed to write log for %s: %v\n", record.ContainerName, err)
 			continue
 		}
@@ -152,49 +152,57 @@ func recordLogs() {
 	}
 }
 
-func loadLog(openedFiles map[string]*os.File) {
-	dir, err := os.ReadDir("logs")
+func loadLog(openedFiles map[string]*os.File) error {
+	entries, err := os.ReadDir("logs")
 	if err != nil {
-		fmt.Printf("error reading logs dir: %s", err.Error())
-		os.Exit(1)
+		return fmt.Errorf("error reading logs dir: %w", err)
 	}
-	cnamePaths := make(map[string][]string, len(dir))
-	for _, entry := range dir {
-		name := entry.Name()
-		containerName := strings.Split(strings.Split(name, "-")[3], ".log")[0]
-		cnamePaths[containerName] = append(cnamePaths[containerName], name)
-	}
-	cnamePath := make(map[string]string)
-	for cname, lPath := range cnamePaths {
-		cnamePath[cname] = lPath[0]
-		for _, path := range lPath {
-			pt := strings.Split(path, fmt.Sprintf("-%s", cname))[0]
-			pTime, err := time.Parse(time.DateOnly, pt)
-			if err != nil {
-				fmt.Printf("failed to parse %s file: %s date\n", cname, path)
-				os.Exit(1)
-			}
 
-			prevTime, err := time.Parse(time.DateOnly, strings.Split(cnamePath[cname], fmt.Sprintf("-%s", cname))[0])
-			if err != nil {
-				fmt.Printf("failed to parse %s file: %s date\n", cname, cnamePath[cname])
-				os.Exit(1)
-			}
-			if pTime.After(prevTime) {
-				fmt.Println("fresher file", path)
-				cnamePath[cname] = path
-			}
+	latestFiles := make(map[string]struct {
+		filename  string
+		timestamp time.Time
+	})
+
+	for _, entry := range entries {
+		filename := entry.Name()
+
+		if !strings.HasSuffix(filename, ".log") {
+			continue
 		}
-	}
-	for _, p := range cnamePath {
-		fmt.Printf("path: %v\n", p)
-		f, err := os.OpenFile(path.Join("logs", p), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
+		parts := strings.Split(filename, "-")
+		if len(parts) < 4 {
+			continue
+		}
+
+		containerName := strings.TrimSuffix(parts[len(parts)-1], ".log")
+
+		timestampStr := strings.Split(filename, fmt.Sprintf("-%s.log", containerName))[0]
+		timestamp, err := time.Parse(time.DateOnly, timestampStr)
 		if err != nil {
-			fmt.Printf("failed to open %s du: %s", p, err.Error())
-			os.Exit(1)
+			fmt.Printf("Warning: skipping file %s - invalid timestamp: %v", filename, err)
+			continue
 		}
-		openedFiles[strings.Split(p, ".log")[0]] = f
+
+		current, exists := latestFiles[containerName]
+		if !exists || timestamp.After(current.timestamp) {
+			latestFiles[containerName] = struct {
+				filename  string
+				timestamp time.Time
+			}{filename, timestamp}
+		}
 	}
+
+	for container, fileInfo := range latestFiles {
+		fullPath := path.Join("logs", fileInfo.filename)
+		f, err := os.OpenFile(fullPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to open %s: %w", fullPath, err)
+		}
+		openedFiles[container] = f
+	}
+
+	return nil
 }
 func cleanupOldFiles(openedFiles map[string]*os.File) {
 	fmt.Println("ticked")
@@ -218,7 +226,7 @@ func cleanupOldFiles(openedFiles map[string]*os.File) {
 			continue
 		}
 
-		if ftTime.Before(time.Now().Add(-15 * time.Minute)) {
+		if ftTime.Before(time.Now().Add(-24 * time.Hour)) {
 			fmt.Printf("%s is deprecated\n", key)
 			if err := file.Close(); err != nil {
 				fmt.Printf("failed to close %s file\n", key)
