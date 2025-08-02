@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"regexp"
 	"sync"
 	"time"
 
@@ -106,24 +107,33 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 
 func recordLogs() {
 	openedFiles := make(map[string]*os.File)
+	go func() {
+		tk := time.NewTicker(time.Minute * 10)
+		for {
+			select {
+			case <-tk.C:
+				cleanupOldFiles(openedFiles)
+			}
+		}
+	}()
 	for record := range recordChan {
 		var file *os.File
-		f, ok := openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)]
+		f, ok := openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateTime), record.ContainerName)]
 		if !ok {
 			if err := os.MkdirAll("logs", 0755); err != nil {
 				log.Printf("Failed to create logs directory: %v\n", err)
 				continue
 			}
-			file, err := os.OpenFile(path.Join("logs", fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			file, err := os.OpenFile(path.Join("logs", fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateTime), record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				log.Printf("Failed to open log file for %s: %v\n", record.ContainerName, err)
 				continue
 			}
-			openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)] = file
+			openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateTime), record.ContainerName)] = file
 			f = file
 		}
 		file = f
-		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateOnly), record.Log); err != nil {
+		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateTime), record.Log); err != nil {
 			log.Printf("Failed to write log for %s: %v\n", record.ContainerName, err)
 			continue
 		}
@@ -135,6 +145,38 @@ func recordLogs() {
 	for name, file := range openedFiles {
 		if err := file.Close(); err != nil {
 			log.Printf("Failed to close log file for %s: %v\n", name, err)
+		}
+	}
+}
+func cleanupOldFiles(openedFiles map[string]*os.File) {
+	fmt.Println("ticked")
+	for key, file := range openedFiles {
+
+		re := regexp.MustCompile(`^(\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) \d{2}:\d{2}:\d{2})`)
+		matches := re.FindStringSubmatch(key)
+
+		if len(matches) < 2 {
+			fmt.Printf("no date found in key: %s\n", key)
+			continue
+		}
+
+		ft := matches[1]
+		fmt.Printf("ft: %v\n", ft)
+
+		ftTime, err := time.Parse(time.DateTime, ft)
+		fmt.Printf("ftTime: %v\n", ftTime)
+		if err != nil {
+			fmt.Printf("failed to parse %s date %s\n", key, err.Error())
+			continue
+		}
+
+		if ftTime.Before(time.Now().Add(-15 * time.Minute)) {
+			fmt.Printf("%s is deprecated\n", key)
+			if err := file.Close(); err != nil {
+				fmt.Printf("failed to close %s file\n", key)
+				continue
+			}
+			delete(openedFiles, key)
 		}
 	}
 }
