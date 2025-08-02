@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,6 +108,7 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 
 func recordLogs() {
 	openedFiles := make(map[string]*os.File)
+	loadLog(openedFiles)
 	go func() {
 		tk := time.NewTicker(time.Minute * 10)
 		for {
@@ -118,22 +120,22 @@ func recordLogs() {
 	}()
 	for record := range recordChan {
 		var file *os.File
-		f, ok := openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateTime), record.ContainerName)]
+		f, ok := openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)]
 		if !ok {
 			if err := os.MkdirAll("logs", 0755); err != nil {
 				log.Printf("Failed to create logs directory: %v\n", err)
 				continue
 			}
-			file, err := os.OpenFile(path.Join("logs", fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateTime), record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			file, err := os.OpenFile(path.Join("logs", fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				log.Printf("Failed to open log file for %s: %v\n", record.ContainerName, err)
 				continue
 			}
-			openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateTime), record.ContainerName)] = file
+			openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)] = file
 			f = file
 		}
 		file = f
-		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateTime), record.Log); err != nil {
+		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateOnly), record.Log); err != nil {
 			log.Printf("Failed to write log for %s: %v\n", record.ContainerName, err)
 			continue
 		}
@@ -146,6 +148,51 @@ func recordLogs() {
 		if err := file.Close(); err != nil {
 			log.Printf("Failed to close log file for %s: %v\n", name, err)
 		}
+	}
+}
+
+func loadLog(openedFiles map[string]*os.File) {
+	dir, err := os.ReadDir("logs")
+	if err != nil {
+		fmt.Printf("error reading logs dir: %s", err.Error())
+		os.Exit(1)
+	}
+	cnamePaths := make(map[string][]string, len(dir))
+	for _, entry := range dir {
+		name := entry.Name()
+		containerName := strings.Split(strings.Split(name, "-")[3], ".log")[0]
+		cnamePaths[containerName] = append(cnamePaths[containerName], name)
+	}
+	cnamePath := make(map[string]string)
+	for cname, lPath := range cnamePaths {
+		cnamePath[cname] = lPath[0]
+		for _, path := range lPath {
+			pt := strings.Split(path, fmt.Sprintf("-%s", cname))[0]
+			pTime, err := time.Parse(time.DateOnly, pt)
+			if err != nil {
+				fmt.Printf("failed to parse %s file: %s date\n", cname, path)
+				os.Exit(1)
+			}
+
+			prevTime, err := time.Parse(time.DateOnly, strings.Split(cnamePath[cname], fmt.Sprintf("-%s", cname))[0])
+			if err != nil {
+				fmt.Printf("failed to parse %s file: %s date\n", cname, cnamePath[cname])
+				os.Exit(1)
+			}
+			if pTime.After(prevTime) {
+				fmt.Println("fresher file", path)
+				cnamePath[cname] = path
+			}
+		}
+	}
+	for _, p := range cnamePath {
+		fmt.Printf("path: %v\n", p)
+		f, err := os.OpenFile(path.Join("logs", p), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Printf("failed to open %s du: %s", p, err.Error())
+			os.Exit(1)
+		}
+		openedFiles[strings.Split(p, ".log")[0]] = f
 	}
 }
 func cleanupOldFiles(openedFiles map[string]*os.File) {
@@ -163,7 +210,7 @@ func cleanupOldFiles(openedFiles map[string]*os.File) {
 		ft := matches[1]
 		fmt.Printf("ft: %v\n", ft)
 
-		ftTime, err := time.Parse(time.DateTime, ft)
+		ftTime, err := time.Parse(time.DateOnly, ft)
 		fmt.Printf("ftTime: %v\n", ftTime)
 		if err != nil {
 			fmt.Printf("failed to parse %s date %s\n", key, err.Error())
