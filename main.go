@@ -108,18 +108,18 @@ func recordLogs() {
 	openedFiles := make(map[string]*os.File)
 	for record := range recordChan {
 		var file *os.File
-		f, ok := openedFiles[record.ContainerName]
+		f, ok := openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)]
 		if !ok {
 			if err := os.MkdirAll("logs", 0755); err != nil {
 				log.Printf("Failed to create logs directory: %v\n", err)
 				continue
 			}
-			file, err := os.OpenFile(path.Join("logs", fmt.Sprintf("%s.log", record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			file, err := os.OpenFile(path.Join("logs", fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				log.Printf("Failed to open log file for %s: %v\n", record.ContainerName, err)
 				continue
 			}
-			openedFiles[record.ContainerName] = file
+			openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)] = file
 			f = file
 		}
 		file = f
