@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path"
 	"regexp"
@@ -228,6 +229,29 @@ func cleanupOldFiles(openedFiles map[string]*os.File) {
 	}
 }
 
+func healthCheck() {
+	ln, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		fmt.Printf("failed to listen to 8080 for health check %s\n", err.Error())
+		os.Exit(1)
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			fmt.Printf("failed to accept connection %s\n", err.Error())
+			os.Exit(1)
+		}
+		go func() {
+			_, err := conn.Write([]byte("healthy\n"))
+			if err != nil {
+				fmt.Printf("failed to send health message %s\n", err.Error())
+				os.Exit(1)
+			}
+			conn.Close()
+		}()
+	}
+}
+
 func main() {
 	recordChan = make(chan RecordLog, 1000)
 	dc, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -238,5 +262,6 @@ func main() {
 	ctx := context.Background()
 	go watchContainers(ctx, dc)
 	go recordLogs()
+	go healthCheck()
 	select {}
 }
