@@ -7,15 +7,18 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/client"
+	"github.com/fsnotify/fsnotify"
 )
 
 type RecordLog struct {
@@ -28,6 +31,8 @@ type StreamOpts struct {
 }
 
 var recordChan chan RecordLog
+var tracked map[string]context.CancelFunc
+var openedFiles map[string]*os.File
 
 func streamClog(ctx context.Context, dc *client.Client, cn StreamOpts) {
 	containerID := cn.ID
@@ -59,11 +64,7 @@ func streamClog(ctx context.Context, dc *client.Client, cn StreamOpts) {
 		log.Printf("Error reading logs for %s: %v\n", name, err)
 	}
 }
-
-func watchContainers(ctx context.Context, dc *client.Client) {
-	tracked := make(map[string]context.CancelFunc)
-	var mu sync.Mutex
-	// already running containers
+func registerCns(ctx context.Context, dc *client.Client) {
 	cl, err := dc.ContainerList(ctx, container.ListOptions{
 		Latest: true,
 		Before: time.Now().Format(time.DateTime),
@@ -72,11 +73,13 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 		fmt.Printf("failed to fetch containers list %s", err.Error())
 		os.Exit(1)
 	}
-	mu.Lock()
+
 	for _, c := range cl {
-		if _, exists := tracked[c.ID]; !exists {
+		name := strings.TrimPrefix(c.Names[0], "/")
+		_, exists := tracked[name]
+		if !exists {
 			containerCtx, cancel := context.WithCancel(ctx)
-			tracked[c.ID] = cancel
+			tracked[name] = cancel
 
 			go func(containerID, containerName string) {
 				defer func() {
@@ -89,9 +92,15 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 					Name: containerName,
 					ID:   containerID,
 				})
-			}(c.ID, c.Names[0])
+			}(c.ID, name)
 		}
 	}
+}
+func watchContainers(ctx context.Context, dc *client.Client) {
+	var mu sync.Mutex
+	// already running containers
+	mu.Lock()
+	registerCns(ctx, dc)
 	mu.Unlock()
 	eventChan, errChan := dc.Events(ctx, events.ListOptions{})
 	// new containers activity
@@ -102,27 +111,32 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 			continue
 		case event := <-eventChan:
 			if event.Type == "container" {
+				fmt.Println(event.Type)
 				mu.Lock()
+				name := event.Actor.Attributes["name"]
+				fmt.Println("NBAME", name)
 				switch event.Action {
 				case "start":
-					if _, ok := tracked[event.Actor.ID]; !ok {
+					fmt.Println("container started and exist", name)
+					if _, ok := tracked[name]; !ok {
+						fmt.Println("container not exist", ok)
 						containerCtx, cancel := context.WithCancel(ctx)
-						tracked[event.Actor.ID] = cancel
+						tracked[name] = cancel
 						go func() {
 							if r := recover(); r != nil {
-								fmt.Printf("panic in streamClog for container %s: %v", event.Actor.ID, r)
+								fmt.Printf("panic in streamClog for container %s: %v", name, r)
 							}
 							streamClog(containerCtx, dc, StreamOpts{
-								Name: event.Actor.Attributes["name"],
+								Name: name,
 								ID:   event.Actor.ID,
 							})
 						}()
 					}
 				case "die", "stop", "kill":
-					if cancel, exists := tracked[event.Actor.ID]; exists {
-						fmt.Printf("container %s log stopped", event.Actor.ID)
+					if cancel, exists := tracked[name]; exists {
+						fmt.Printf("container %s log stopped", name)
 						cancel()
-						delete(tracked, event.Actor.ID)
+						delete(tracked, name)
 					}
 				}
 				mu.Unlock()
@@ -142,7 +156,7 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 }
 
 func recordLogs() {
-	openedFiles := make(map[string]*os.File)
+	openedFiles = make(map[string]*os.File)
 	loadLog(openedFiles)
 	go func() {
 		tk := time.NewTicker(time.Hour * 12)
@@ -281,15 +295,62 @@ func healthCheck() {
 	}
 }
 
+func watchLogsDir(ctx context.Context, dc *client.Client) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Println("failed to init watcher")
+		os.Exit(1)
+	}
+	defer watcher.Close()
+	if err := watcher.Add("logs"); err != nil {
+		fmt.Println("failed to add logs to watcher")
+	}
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Op.Has(fsnotify.Remove) || event.Op.Has(fsnotify.Rename) {
+				if !strings.Contains(event.Name, "logs/") || !strings.HasSuffix(event.Name, ".log") {
+					continue
+				}
+
+				logPath := strings.Split(event.Name, "logs/")[1]
+				filename := strings.TrimSuffix(logPath, ".log")
+				parts := strings.Split(filename, "-")
+
+				if len(parts) < 4 {
+					continue
+				}
+
+				cname := parts[3]
+				if _, ok := tracked[cname]; ok {
+					delete(tracked, cname)
+					delete(openedFiles, filename)
+					registerCns(ctx, dc)
+				}
+
+			}
+		}
+	}
+}
+
 func main() {
 	recordChan = make(chan RecordLog, 1000)
+	tracked = make(map[string]context.CancelFunc)
+
 	dc, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		log.Fatalf("Failed to create Docker client: %v\n", err)
 	}
-
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer func() {
+		fmt.Println("terminate main context")
+		stop()
+	}()
 	go recordLogs()
 	go healthCheck()
+	go watchLogsDir(ctx, dc)
 	watchContainers(ctx, dc)
 }

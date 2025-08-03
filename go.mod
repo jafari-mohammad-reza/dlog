@@ -2,7 +2,10 @@ module dlog
 
 go 1.24.1
 
-require github.com/docker/docker v28.3.3+incompatible
+require (
+	github.com/docker/docker v28.3.3+incompatible
+	github.com/fsnotify/fsnotify v1.9.0
+)
 
 require (
 	github.com/Microsoft/go-winio v0.4.14 // indirect
