@@ -22,4 +22,3 @@ rm -rf vendor/
 
 echo "Built: $(du -h dlog | cut -f1)"
 ldd dlog 2>&1 || file dlog
-316673
