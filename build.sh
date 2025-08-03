@@ -4,11 +4,25 @@ echo "Building with vendored dependencies..."
 
 # Vendor dependencies first
 go mod vendor
-
+PLATFORM=$1
+PROCESSOR=$2
+ARCHITECT=$3
+if [ -z "$PLATFORM"]; then
+    echo "please define platform linux/cross"
+    exit 1
+fi
+if [ -z "$PROCESSOR"]; then
+    echo "please define processor amd/arm"
+    exit 1
+fi
+if [ -z "$ARCHITECT"]; then
+    echo "please define architect 32/64"
+    exit 1
+fi
 # Build static binary
 CGO_ENABLED=0 \
-GOOS=linux \
-GOARCH=amd64 \
+GOOS="$PLATFORM" \
+GOARCH="$PROCESSOR""$ARCHITECT" \
 go build \
     -mod=vendor \
     -a \

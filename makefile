@@ -1,4 +1,4 @@
-build:
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -trimpath -o dlog
+build_linux_amd_64:
+	./build linux amd 64
 run:
 	@air -c .air.toml
