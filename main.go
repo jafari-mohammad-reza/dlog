@@ -40,8 +40,8 @@ func streamClog(ctx context.Context, dc *client.Client, cn StreamOpts) {
 	logOptions := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
-		Timestamps: true,
 		Follow:     true,
+		Details:    false,
 		Tail:       "0",
 	}
 
@@ -111,15 +111,11 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 			continue
 		case event := <-eventChan:
 			if event.Type == "container" {
-				fmt.Println(event.Type)
 				mu.Lock()
 				name := event.Actor.Attributes["name"]
-				fmt.Println("NBAME", name)
 				switch event.Action {
 				case "start":
-					fmt.Println("container started and exist", name)
 					if _, ok := tracked[name]; !ok {
-						fmt.Println("container not exist", ok)
 						containerCtx, cancel := context.WithCancel(ctx)
 						tracked[name] = cancel
 						go func() {
@@ -170,6 +166,7 @@ func recordLogs() {
 	for record := range recordChan {
 		var file *os.File
 		f, ok := openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)]
+		startRecord := time.Now()
 		if !ok {
 			if err := os.MkdirAll("logs", 0755); err != nil {
 				log.Printf("Failed to create logs directory: %v\n", err)
@@ -192,6 +189,8 @@ func recordLogs() {
 			log.Printf("Failed to sync log file for %s: %v\n", record.ContainerName, err)
 			continue
 		}
+		took := time.Since(startRecord)
+		fmt.Printf("processing %s log took %v\n", record.ContainerName, took)
 	}
 	for name, file := range openedFiles {
 		if err := file.Close(); err != nil {
