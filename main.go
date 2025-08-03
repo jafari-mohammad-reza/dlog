@@ -63,9 +63,38 @@ func streamClog(ctx context.Context, dc *client.Client, cn StreamOpts) {
 func watchContainers(ctx context.Context, dc *client.Client) {
 	tracked := make(map[string]context.CancelFunc)
 	var mu sync.Mutex
+	// already running containers
+	cl, err := dc.ContainerList(ctx, container.ListOptions{
+		Latest: true,
+		Before: time.Now().Format(time.DateTime),
+	})
+	if err != nil {
+		fmt.Printf("failed to fetch containers list %s", err.Error())
+		os.Exit(1)
+	}
+	mu.Lock()
+	for _, c := range cl {
+		if _, exists := tracked[c.ID]; !exists {
+			containerCtx, cancel := context.WithCancel(ctx)
+			tracked[c.ID] = cancel
 
+			go func(containerID, containerName string) {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("panic in streamClog for container %s: %v", containerID, r)
+					}
+				}()
+
+				streamClog(containerCtx, dc, StreamOpts{
+					Name: containerName,
+					ID:   containerID,
+				})
+			}(c.ID, c.Names[0])
+		}
+	}
+	mu.Unlock()
 	eventChan, errChan := dc.Events(ctx, events.ListOptions{})
-
+	// new containers activity
 	for {
 		select {
 		case err := <-errChan:
@@ -79,10 +108,15 @@ func watchContainers(ctx context.Context, dc *client.Client) {
 					if _, ok := tracked[event.Actor.ID]; !ok {
 						containerCtx, cancel := context.WithCancel(ctx)
 						tracked[event.Actor.ID] = cancel
-						go streamClog(containerCtx, dc, StreamOpts{
-							Name: event.Actor.Attributes["name"],
-							ID:   event.Actor.ID,
-						})
+						go func() {
+							if r := recover(); r != nil {
+								fmt.Printf("panic in streamClog for container %s: %v", event.Actor.ID, r)
+							}
+							streamClog(containerCtx, dc, StreamOpts{
+								Name: event.Actor.Attributes["name"],
+								ID:   event.Actor.ID,
+							})
+						}()
 					}
 				case "die", "stop", "kill":
 					if cancel, exists := tracked[event.Actor.ID]; exists {
