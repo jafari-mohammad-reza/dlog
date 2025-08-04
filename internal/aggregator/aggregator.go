@@ -35,9 +35,11 @@ func (a *AggregatorService) Start(ctx context.Context) chan error {
 	errChan := make(chan error)
 	go func() {
 		tk := time.NewTicker(time.Hour * 12)
-		for {
+		for range tk.C {
 			select {
-			case <-tk.C:
+			case <-ctx.Done():
+				return
+			default:
 				a.cleanup(ctx)
 			}
 		}
@@ -213,8 +215,11 @@ func (a *AggregatorService) watchDirs(ctx context.Context) error {
 					ID: cname,
 					Op: conf.RemoveTracked,
 				}
-
 			}
+		case err := <-watcher.Errors:
+			return fmt.Errorf("watcher error: %w", err)
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
