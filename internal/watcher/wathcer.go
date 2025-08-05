@@ -207,7 +207,6 @@ func (w *Watcher) streamClog(ctx context.Context, cn conf.StreamOpts) {
 		return
 	}
 	defer logReader.Close()
-
 	scanner := bufio.NewScanner(logReader)
 	for scanner.Scan() {
 		line := scanner.Text()

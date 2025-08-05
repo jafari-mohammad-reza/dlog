@@ -79,7 +79,7 @@ func TestAggregator_cleanup(t *testing.T) {
 func TestAggregator_watchDirs_cancel(t *testing.T) {
 	cfg := &conf.Config{}
 	trackedChan := make(chan conf.TrackedOption)
-	ag := NewAggregatorService(cfg, trackedChan, nil)
+	ag := NewAggregatorService(cfg, "localhost", trackedChan, nil)
 
 	os.Mkdir("logs", 0777)
 	defer os.RemoveAll("logs")
