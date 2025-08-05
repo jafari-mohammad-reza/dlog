@@ -182,12 +182,13 @@ func (a *AggregatorService) cleanup(ctx context.Context) {
 func (a *AggregatorService) watchDirs(ctx context.Context) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		fmt.Println("failed to init watcher")
+		fmt.Printf("failed to init watcher %s\n", err.Error())
 		return err
 	}
 	defer watcher.Close()
 	if err := watcher.Add("logs"); err != nil {
-		fmt.Println("failed to add logs to watcher")
+		fmt.Printf("failed to add logs to watcher: %s\n", err.Error())
+		return err
 	}
 	for {
 		select {
