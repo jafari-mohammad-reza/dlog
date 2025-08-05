@@ -7,7 +7,13 @@ import (
 )
 
 type Config struct {
-	HealthCheckPort int `mapstructure:"health_port"`
+	HealthCheckPort int    `mapstructure:"health_port"`
+	Hosts           []Host `mapstructure:"hosts"`
+}
+
+type Host struct {
+	Name string `mapstructure:"name"`
+	Addr string `mapstructure:"address"`
 }
 
 func NewConfig() (*Config, error) {
@@ -16,6 +22,8 @@ func NewConfig() (*Config, error) {
 	v.SetConfigType("yaml")
 	v.AddConfigPath(".")
 	v.SetDefault("health_port", 8080)
+	v.SetDefault("hosts.name", "localhost")
+	v.SetDefault("hosts.address", "unix:///var/run/docker.sock")
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config: %s", err.Error())
 	}

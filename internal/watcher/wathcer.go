@@ -17,7 +17,39 @@ import (
 )
 
 type WatcherService struct {
-	cfg         *conf.Config
+	cfg      *conf.Config
+	Watchers []*Watcher
+}
+
+func NewWatcherService(cfg *conf.Config) *WatcherService {
+	return &WatcherService{
+		cfg:      cfg,
+		Watchers: make([]*Watcher, len(cfg.Hosts)),
+	}
+}
+
+func (ws *WatcherService) Start(ctx context.Context) error {
+	errChan := make(chan error, 1)
+	for _, host := range ws.cfg.Hosts {
+		w := NewWatcher(ws.cfg, host)
+		ws.Watchers = append(ws.Watchers, w)
+		go func() {
+			if err := w.Start(ctx); err != nil {
+				errChan <- err
+			}
+		}()
+	}
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type Watcher struct {
+	Host        conf.Host
 	dc          *client.Client
 	tracked     map[string]context.CancelFunc
 	trackedChan chan conf.TrackedOption
@@ -26,20 +58,20 @@ type WatcherService struct {
 	ag          *aggregator.AggregatorService
 }
 
-func NewWatcherService(cfg *conf.Config) *WatcherService {
+func NewWatcher(cfg *conf.Config, host conf.Host) *Watcher {
 	trackedChan := make(chan conf.TrackedOption, 100)
 	recordChan := make(chan conf.RecordLog, 1000)
-	return &WatcherService{
-		cfg:         cfg,
+	return &Watcher{
+		Host:        host,
 		tracked:     make(map[string]context.CancelFunc),
 		trackedChan: trackedChan,
 		recordChan:  recordChan,
 		mu:          sync.Mutex{},
-		ag:          aggregator.NewAggregatorService(cfg, trackedChan, recordChan),
+		ag:          aggregator.NewAggregatorService(cfg, host.Name, trackedChan, recordChan),
 	}
 }
-
-func (w *WatcherService) Start(ctx context.Context) error {
+func (w *Watcher) Start(ctx context.Context) error {
+	fmt.Printf("%s host started \n", w.Host.Name)
 	dc, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		log.Fatalf("Failed to create Docker client: %v", err)
@@ -72,7 +104,7 @@ func (w *WatcherService) Start(ctx context.Context) error {
 	}
 }
 
-func (w *WatcherService) watchContainers(ctx context.Context) error {
+func (w *Watcher) watchContainers(ctx context.Context) error {
 
 	eventChan, errChan := w.dc.Events(ctx, events.ListOptions{})
 	for {
@@ -122,7 +154,7 @@ func (w *WatcherService) watchContainers(ctx context.Context) error {
 	}
 }
 
-func (w *WatcherService) registerCns(ctx context.Context) error {
+func (w *Watcher) registerCns(ctx context.Context) error {
 	cl, err := w.dc.ContainerList(ctx, container.ListOptions{
 		Latest: true,
 		Before: time.Now().Format(time.DateTime),
@@ -158,7 +190,7 @@ func (w *WatcherService) registerCns(ctx context.Context) error {
 	return nil
 }
 
-func (w *WatcherService) streamClog(ctx context.Context, cn conf.StreamOpts) {
+func (w *Watcher) streamClog(ctx context.Context, cn conf.StreamOpts) {
 	containerID := cn.ID
 	name := cn.Name
 	logOptions := container.LogsOptions{

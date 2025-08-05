@@ -17,14 +17,16 @@ import (
 
 type AggregatorService struct {
 	cfg         *conf.Config
+	host        string
 	openedFiles map[string]*os.File
 	trackedChan chan conf.TrackedOption
 	recordChan  chan conf.RecordLog
 }
 
-func NewAggregatorService(cfg *conf.Config, trackedChan chan conf.TrackedOption, recordChan chan conf.RecordLog) *AggregatorService {
+func NewAggregatorService(cfg *conf.Config, host string, trackedChan chan conf.TrackedOption, recordChan chan conf.RecordLog) *AggregatorService {
 	return &AggregatorService{
 		cfg:         cfg,
+		host:        host,
 		openedFiles: make(map[string]*os.File),
 		trackedChan: trackedChan,
 		recordChan:  recordChan,
@@ -65,11 +67,11 @@ func (a *AggregatorService) recordLogs() error {
 		f, ok := a.openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)]
 		startRecord := time.Now()
 		if !ok {
-			if err := os.MkdirAll("logs", 0755); err != nil {
+			if err := os.MkdirAll(fmt.Sprintf("%s-logs", a.host), 0755); err != nil {
 				log.Printf("Failed to create logs directory: %v\n", err)
 				return err
 			}
-			file, err := os.OpenFile(path.Join("logs", fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			file, err := os.OpenFile(path.Join(fmt.Sprintf("%s-logs", a.host), fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), record.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				log.Printf("Failed to open log file for %s: %v\n", record.ContainerName, err)
 				return err
@@ -98,7 +100,7 @@ func (a *AggregatorService) recordLogs() error {
 }
 
 func (a *AggregatorService) loadLog() error {
-	entries, err := os.ReadDir("logs")
+	entries, err := os.ReadDir(fmt.Sprintf("%s-logs", a.host))
 	if err != nil {
 		return fmt.Errorf("error reading logs dir: %w", err)
 	}
@@ -142,7 +144,7 @@ func (a *AggregatorService) loadLog() error {
 	}
 
 	for container, fileInfo := range latestFiles {
-		fullPath := path.Join("logs", fileInfo.filename)
+		fullPath := path.Join(fmt.Sprintf("%s-logs", a.host), fileInfo.filename)
 		f, err := os.OpenFile(fullPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to open %s: %w", fullPath, err)
@@ -189,7 +191,12 @@ func (a *AggregatorService) watchDirs(ctx context.Context) error {
 		return err
 	}
 	defer watcher.Close()
-	if err := watcher.Add("logs"); err != nil {
+	if _, err := os.Stat(fmt.Sprintf("%s-logs", a.host)); os.IsNotExist(err) {
+		if err := os.Mkdir(fmt.Sprintf("%s-logs", a.host), 0755); err != nil {
+			return err
+		}
+	}
+	if err := watcher.Add(fmt.Sprintf("%s-logs", a.host)); err != nil {
 		fmt.Printf("failed to add logs to watcher: %s\n", err.Error())
 		return err
 	}
