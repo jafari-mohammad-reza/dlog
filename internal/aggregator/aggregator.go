@@ -115,18 +115,21 @@ func (a *AggregatorService) loadLog() error {
 			continue
 		}
 
-		parts := strings.Split(filename, "-")
-		if len(parts) < 4 {
+		if len(filename) < 16 {
 			continue
 		}
 
-		containerName := strings.TrimSuffix(parts[len(parts)-1], ".log")
-
-		timestampStr := strings.Split(filename, fmt.Sprintf("-%s.log", containerName))[0]
-		timestamp, err := time.Parse(time.DateOnly, timestampStr)
+		datePart := filename[:10]
+		timestamp, err := time.Parse(time.DateOnly, datePart)
 		if err != nil {
-			fmt.Printf("Warning: skipping file %s - invalid timestamp: %v", filename, err)
+			fmt.Printf("Warning: skipping file %s - invalid date: %v\n", filename, err)
 			continue
+		}
+
+		rest := filename[11 : len(filename)-4]
+		containerName := rest
+		if idx := strings.LastIndex(rest, "-"); idx != -1 {
+			containerName = rest[idx+1:]
 		}
 
 		current, exists := latestFiles[containerName]
@@ -151,7 +154,7 @@ func (a *AggregatorService) loadLog() error {
 }
 func (a *AggregatorService) cleanup(ctx context.Context) {
 	for key, file := range a.openedFiles {
-		re := regexp.MustCompile(`^(\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) \d{2}:\d{2}:\d{2})`)
+		re := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})`)
 		matches := re.FindStringSubmatch(key)
 
 		if len(matches) < 2 {
