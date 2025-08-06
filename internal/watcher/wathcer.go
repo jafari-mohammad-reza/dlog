@@ -76,6 +76,12 @@ func (w *Watcher) Start(ctx context.Context) error {
 	if err != nil {
 		log.Fatalf("Failed to create Docker client: %v", err)
 	}
+	pctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+	if _, err := dc.Ping(pctx); err != nil {
+		return fmt.Errorf("failed to connect to %s", w.Host.Name)
+	}
+
 	w.dc = dc
 	errChan := make(chan error, 1)
 
@@ -98,10 +104,18 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 	select {
 	case err := <-errChan:
+		w.closeDc()
 		return err
 	case <-ctx.Done():
+		w.closeDc()
 		return ctx.Err()
 	}
+}
+func (w *Watcher) closeDc() error {
+	if w.dc != nil {
+		return w.dc.Close()
+	}
+	return nil
 }
 
 func (w *Watcher) watchContainers(ctx context.Context) error {
