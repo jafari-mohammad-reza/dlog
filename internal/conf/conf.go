@@ -25,8 +25,13 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("hosts.name", "localhost")
 	v.SetDefault("hosts.address", "unix:///var/run/docker.sock")
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config: %s", err.Error())
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			fmt.Println("Config file not found, using defaults or environment variables.")
+		} else {
+			return nil, err
+		}
 	}
+
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %s", err.Error())

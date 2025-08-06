@@ -12,7 +12,7 @@ import (
 func TestAggregator_recordLogs(t *testing.T) {
 	cfg := &conf.Config{}
 	recordChan := make(chan conf.RecordLog, 1)
-	ag := NewAggregatorService(cfg, nil, recordChan)
+	ag := NewAggregatorService(cfg, "localhost", nil, recordChan)
 
 	go func() {
 		recordChan <- conf.RecordLog{
@@ -40,7 +40,7 @@ func TestAggregator_recordLogs(t *testing.T) {
 
 func TestAggregator_loadLog(t *testing.T) {
 	cfg := &conf.Config{}
-	ag := NewAggregatorService(cfg, nil, nil)
+	ag := NewAggregatorService(cfg, "localhost", nil, nil)
 
 	os.Mkdir("logs", 0777)
 	defer os.RemoveAll("logs")
@@ -59,7 +59,7 @@ func TestAggregator_loadLog(t *testing.T) {
 
 func TestAggregator_cleanup(t *testing.T) {
 	cfg := &conf.Config{}
-	ag := NewAggregatorService(cfg, nil, nil)
+	ag := NewAggregatorService(cfg, "localhost", nil, nil)
 
 	oldDate := time.Now().Add(-48 * time.Hour).Format(time.DateOnly)
 	fileName := oldDate + "-test-cleanup"
