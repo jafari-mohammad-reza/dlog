@@ -20,3 +20,10 @@ type RecordLog struct {
 	ContainerName string
 	Log           string
 }
+
+type LogMethod string
+
+const (
+	Socket LogMethod = "socket"
+	File   LogMethod = "file"
+)

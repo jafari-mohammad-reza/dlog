@@ -7,6 +7,7 @@ import (
 	"dlog/internal/conf"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -214,14 +215,33 @@ func (w *Watcher) streamClog(ctx context.Context, cn conf.StreamOpts) {
 		Details:    false,
 		Tail:       "0",
 	}
-
-	logReader, err := w.dc.ContainerLogs(ctx, containerID, logOptions)
-	if err != nil {
-		log.Printf("Failed to get logs for container %s: %v\n", name, err)
+	var scanner *bufio.Scanner
+	if w.Host.Method == conf.Socket {
+		logReader, err := w.dc.ContainerLogs(ctx, containerID, logOptions)
+		if err != nil {
+			log.Printf("Failed to get logs for container %s: %v\n", name, err)
+			return
+		}
+		defer logReader.Close()
+		scanner = bufio.NewScanner(logReader)
+	} else if w.Host.Method == conf.File {
+		insp, err := w.dc.ContainerInspect(ctx, cn.ID)
+		if err != nil {
+			fmt.Printf("failed to get %s inspects: %s\n", cn.Name, err.Error())
+			return
+		}
+		f, err := os.OpenFile(insp.LogPath, os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Printf("failed to open %s log file: %s\n", cn.Name, err.Error())
+			return
+		}
+		defer f.Close()
+		scanner = bufio.NewScanner(f)
+	} else {
+		fmt.Printf("invalid log scanning method for %s\n", cn.Name)
 		return
 	}
-	defer logReader.Close()
-	scanner := bufio.NewScanner(logReader)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		w.recordChan <- conf.RecordLog{

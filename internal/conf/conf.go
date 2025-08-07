@@ -12,8 +12,9 @@ type Config struct {
 }
 
 type Host struct {
-	Name string `mapstructure:"name"`
-	Addr string `mapstructure:"address"`
+	Name   string    `mapstructure:"name"`
+	Addr   string    `mapstructure:"address"`
+	Method LogMethod `mapstructure:"method"`
 }
 
 func NewConfig() (*Config, error) {
@@ -24,6 +25,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("health_port", 8080)
 	v.SetDefault("hosts.name", "localhost")
 	v.SetDefault("hosts.address", "unix:///var/run/docker.sock")
+	v.SetDefault("hosts.method", "file")
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 			fmt.Println("Config file not found, using defaults or environment variables.")
