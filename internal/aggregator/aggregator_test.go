@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// TODO: fix failing test and write test for crash listener
 func TestAggregator_recordLogs(t *testing.T) {
 	cfg := &conf.Config{}
 	recordChan := make(chan conf.RecordLog, 1)
@@ -26,7 +27,7 @@ func TestAggregator_recordLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recordLogs failed: %v", err)
 	}
-	if err := os.MkdirAll("localhost-logs",0644); err != nil {
+	if err := os.MkdirAll("localhost-logs", 0644); err != nil {
 		t.Fatalf("failed to create logs directory: %v", err)
 	}
 	logFile := path.Join("localhost-logs", time.Now().Format(time.DateOnly)+"-test-record.log")
