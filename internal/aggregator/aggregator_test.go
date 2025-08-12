@@ -26,8 +26,10 @@ func TestAggregator_recordLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recordLogs failed: %v", err)
 	}
-
-	logFile := path.Join("logs", time.Now().Format(time.DateOnly)+"-test-record.log")
+	if err := os.MkdirAll("localhost-logs",0644); err != nil {
+		t.Fatalf("failed to create logs directory: %v", err)
+	}
+	logFile := path.Join("localhost-logs", time.Now().Format(time.DateOnly)+"-test-record.log")
 	defer os.Remove(logFile)
 	content, err := os.ReadFile(logFile)
 	if err != nil {
@@ -42,10 +44,10 @@ func TestAggregator_loadLog(t *testing.T) {
 	cfg := &conf.Config{}
 	ag := NewAggregatorService(cfg, "localhost", nil, nil)
 
-	os.Mkdir("logs", 0777)
-	defer os.RemoveAll("logs")
+	os.Mkdir("localhost-logs", 0777)
+	defer os.RemoveAll("localhost-logs")
 
-	logFile := path.Join("logs", time.Now().Format(time.DateOnly)+"-test-test.log")
+	logFile := path.Join("localhost-logs", time.Now().Format(time.DateOnly)+"-test-test.log")
 	os.WriteFile(logFile, []byte("test log"), 0644)
 
 	err := ag.loadLog()
@@ -63,9 +65,9 @@ func TestAggregator_cleanup(t *testing.T) {
 
 	oldDate := time.Now().Add(-48 * time.Hour).Format(time.DateOnly)
 	fileName := oldDate + "-test-cleanup"
-	os.Mkdir("logs", 0777)
-	defer os.RemoveAll("logs")
-	f, _ := os.Create(path.Join("logs", fileName+".log"))
+	os.Mkdir("localhost-logs", 0777)
+	defer os.RemoveAll("localhost-logs")
+	f, _ := os.Create(path.Join("localhost-logs", fileName+".log"))
 	ag.openedFiles[fileName] = f
 
 	ctx := context.Background()
@@ -81,8 +83,8 @@ func TestAggregator_watchDirs_cancel(t *testing.T) {
 	trackedChan := make(chan conf.TrackedOption)
 	ag := NewAggregatorService(cfg, "localhost", trackedChan, nil)
 
-	os.Mkdir("logs", 0777)
-	defer os.RemoveAll("logs")
+	os.Mkdir("localhost-logs", 0777)
+	defer os.RemoveAll("localhost-logs")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
