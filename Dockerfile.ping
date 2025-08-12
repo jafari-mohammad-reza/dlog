@@ -1,0 +1,11 @@
+FROM alpine:latest as failed
+
+RUN apk add --no-cache iputils
+
+CMD ping -c 3 8.8.8.8 && sleep 10 && exit 1
+
+FROM alpine:latest as success
+
+RUN apk add --no-cache iputils
+
+CMD ping -c 3 8.8.8.8

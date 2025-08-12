@@ -1,0 +1,10 @@
+version: "3"
+services:
+  dlog:
+    build: .
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Host Docker socket
+    environment:
+      - CONFIG_PATH=/app/config.yaml
+    ports:
+      - "8080:8080" # Healthcheck port

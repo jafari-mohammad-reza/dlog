@@ -6,6 +6,7 @@ import (
 	"dlog/internal/aggregator"
 	"dlog/internal/conf"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -55,6 +56,7 @@ type Watcher struct {
 	tracked     map[string]context.CancelFunc
 	trackedChan chan conf.TrackedOption
 	recordChan  chan conf.RecordLog
+	crashedChan chan conf.RecordLog
 	mu          sync.Mutex
 	ag          *aggregator.AggregatorService
 }
@@ -62,13 +64,15 @@ type Watcher struct {
 func NewWatcher(cfg *conf.Config, host conf.Host) *Watcher {
 	trackedChan := make(chan conf.TrackedOption, 100)
 	recordChan := make(chan conf.RecordLog, 1000)
+	crashChan := make(chan conf.RecordLog, 1000)
 	return &Watcher{
 		Host:        host,
 		tracked:     make(map[string]context.CancelFunc),
 		trackedChan: trackedChan,
 		recordChan:  recordChan,
+		crashedChan: crashChan,
 		mu:          sync.Mutex{},
-		ag:          aggregator.NewAggregatorService(cfg, host.Name, trackedChan, recordChan),
+		ag:          aggregator.NewAggregatorService(cfg, host.Name, trackedChan, recordChan, crashChan),
 	}
 }
 func (w *Watcher) Start(ctx context.Context) error {
@@ -156,6 +160,26 @@ func (w *Watcher) watchContainers(ctx context.Context) error {
 							}(name, event.Actor.ID)
 						}
 					case "die", "stop", "kill":
+						if event.Action == "die" || event.Action == "kill" {
+							clog, err := w.dc.ContainerLogs(ctx, event.Actor.ID, container.LogsOptions{
+								Tail:       "10",
+								ShowStdout: true,
+								ShowStderr: true,
+							})
+							if err != nil {
+								fmt.Printf("failed to get container logs for %s: %v\n", name, err)
+								continue
+							}
+							cl, err := io.ReadAll(clog)
+							if err != nil {
+								fmt.Printf("failed to read container logs for %s: %v\n", name, err)
+								continue
+							}
+							w.crashedChan <- conf.RecordLog{
+								ContainerName: name,
+								Log:           string(cl),
+							}
+						}
 						if cancel, exists := w.tracked[name]; exists {
 							fmt.Printf("container %s log stopped", name)
 							cancel()
