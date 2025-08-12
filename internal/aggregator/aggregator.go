@@ -47,6 +47,12 @@ func (a *AggregatorService) Start(ctx context.Context) chan error {
 		}
 	}()
 	go func() {
+		err := a.mergeClosedLogs(ctx)
+		if err != nil {
+			errChan <- err
+		}
+	}()
+	go func() {
 		err := a.watchDirs(ctx)
 		if err != nil {
 			errChan <- err
@@ -97,6 +103,43 @@ func (a *AggregatorService) recordLogs() error {
 		}
 	}
 	return nil
+}
+
+func (a *AggregatorService) mergeClosedLogs(ctx context.Context) error {
+	errChan := make(chan error,1 )
+	ticker := time.NewTicker(time.Minute)
+	go func(){
+		for {
+			select {
+				case <-ticker.C:
+				fmt.Println("merging closed files")
+				dirName := fmt.Sprintf("%s-logs", a.host)
+				entries , err := os.ReadDir(dirName)
+				if err != nil {
+					errChan<- fmt.Errorf("failed to read %s entires: %s" , dirName , err.Error())
+				}
+				for _ , entry := range entries {
+					fmt.Println(entry.Name())
+					_ , ok := a.openedFiles[entry.Name()]
+					if !ok {
+						fmt.Println("closed  file")
+					}
+				}
+				case <-ctx.Done():
+					return
+			}
+		}
+	}()
+	for {
+		select {
+			case err := <-errChan:
+				if err != nil {
+					return err
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+		}
+	}
 }
 
 func (a *AggregatorService) loadLog() error {

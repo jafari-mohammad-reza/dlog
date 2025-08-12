@@ -12,6 +12,11 @@ import (
 )
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in main:", r)
+		}
+	}()
 	cfg, err := conf.NewConfig()
 	if err != nil {
 		os.Exit(1)

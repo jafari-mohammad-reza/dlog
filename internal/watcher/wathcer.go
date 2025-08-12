@@ -120,52 +120,66 @@ func (w *Watcher) closeDc() error {
 }
 
 func (w *Watcher) watchContainers(ctx context.Context) error {
-
-	eventChan, errChan := w.dc.Events(ctx, events.ListOptions{})
 	for {
-		select {
-		case err := <-errChan:
-			fmt.Printf("failed to process docker event %s", err.Error())
-			continue
-		case event := <-eventChan:
-			if event.Type == "container" {
-				w.mu.Lock()
-				name := event.Actor.Attributes["name"]
-				switch event.Action {
-				case "start":
-					if _, ok := w.tracked[name]; !ok {
-						containerCtx, cancel := context.WithCancel(ctx)
-						w.tracked[name] = cancel
-						go func() {
-							if r := recover(); r != nil {
-								fmt.Printf("panic in streamClog for container %s: %v", name, r)
-							}
-							w.streamClog(containerCtx, conf.StreamOpts{
-								Name: name,
-								ID:   event.Actor.ID,
-							})
-						}()
-					}
-				case "die", "stop", "kill":
-					if cancel, exists := w.tracked[name]; exists {
-						fmt.Printf("container %s log stopped", name)
-						cancel()
-						delete(w.tracked, name)
-					}
-				}
-				w.mu.Unlock()
-			}
+		eventChan, errChan := w.dc.Events(ctx, events.ListOptions{})
 
-		case <-ctx.Done():
-			w.mu.Lock()
-			for _, cancel := range w.tracked {
-				cancel()
+		for {
+			select {
+			case err := <-errChan:
+				if err != nil {
+					fmt.Printf("failed to process docker event: %v\n", err)
+				} else {
+					fmt.Println("docker event channel closed")
+				}
+				goto reconnect
+
+			case event := <-eventChan:
+				if event.Type == "container" {
+					w.mu.Lock()
+					name := event.Actor.Attributes["name"]
+
+					switch event.Action {
+					case "start":
+						if _, ok := w.tracked[name]; !ok {
+							containerCtx, cancel := context.WithCancel(ctx)
+							w.tracked[name] = cancel
+							go func(name, id string) {
+								defer func() {
+									if r := recover(); r != nil {
+										fmt.Printf("panic in streamClog for container %s: %v", name, r)
+									}
+								}()
+								w.streamClog(containerCtx, conf.StreamOpts{
+									Name: name,
+									ID:   id,
+								})
+							}(name, event.Actor.ID)
+						}
+					case "die", "stop", "kill":
+						if cancel, exists := w.tracked[name]; exists {
+							fmt.Printf("container %s log stopped", name)
+							cancel()
+							delete(w.tracked, name)
+						}
+					}
+					w.mu.Unlock()
+				}
+
+			case <-ctx.Done():
+				w.mu.Lock()
+				for _, cancel := range w.tracked {
+					cancel()
+				}
+				w.tracked = make(map[string]context.CancelFunc)
+				w.mu.Unlock()
+				fmt.Println("Context cancelled, stopping event watching")
+				return nil
 			}
-			w.tracked = make(map[string]context.CancelFunc)
-			w.mu.Unlock()
-			fmt.Println("Context cancelled, stopping event watching")
-			return nil
 		}
+
+	reconnect:
+		time.Sleep(2 * time.Second)
+		fmt.Println("Reconnecting to Docker events...")
 	}
 }
 
