@@ -132,7 +132,14 @@ func ensureUTF8(b []byte) []byte {
         }
         return []byte(string(out))
     }
-    return converted
+
+    out := make([]byte, 0, len(converted))
+    for _, c := range converted {
+        if (c >= 32 || c == 10 || c == 9) && c != 127 {
+            out = append(out, c)
+        }
+    }
+    return out
 }
 
 func (a *AggregatorService) mergeClosedLogs(ctx context.Context) error {
