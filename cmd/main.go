@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -19,6 +20,7 @@ func main() {
 	}()
 	cfg, err := conf.NewConfig()
 	if err != nil {
+		fmt.Printf("failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -26,6 +28,19 @@ func main() {
 		fmt.Println("terminate main context")
 		stop()
 	}()
+	if cfg.TimeoutDuration > 0 {
+		go func() {
+			timeout := time.NewTimer(cfg.TimeoutDuration)
+			select {
+			case <-ctx.Done():
+				timeout.Stop()
+			case <-timeout.C:
+				fmt.Println("timeout")
+				stop()
+			}
+		}()
+	}
+
 	go func() {
 		if err := healthCheck(cfg); err != nil {
 			os.Exit(1)

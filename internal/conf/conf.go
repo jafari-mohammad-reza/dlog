@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
@@ -12,6 +13,8 @@ import (
 
 type Config struct {
 	HealthCheckPort int    `mapstructure:"health_port"`
+	Timeout         string `mapstructure:"timeout"`
+	TimeoutDuration time.Duration
 	Hosts           []Host `mapstructure:"hosts"`
 }
 
@@ -55,6 +58,16 @@ func NewConfig() (*Config, error) {
 			return nil, errors.New("invalid method for logs in your os")
 		}
 	}
-
+	if cfg.Timeout != "" {
+		// check if allowed spans like day (d) , hours (h) or minutes (m) exist in timeout
+		if !strings.ContainsAny(cfg.Timeout, "dhms") {
+			return nil, errors.New("invalid timeout")
+		}
+		dur, err := time.ParseDuration(cfg.Timeout)
+		if err != nil {
+			return nil, errors.New("invalid timeout")
+		}
+		cfg.TimeoutDuration = dur
+	}
 	return &cfg, nil
 }
