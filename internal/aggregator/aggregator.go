@@ -1,18 +1,24 @@
 package aggregator
 
 import (
+	"bytes"
 	"context"
 	"dlog/internal/conf"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fsnotify/fsnotify"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 type AggregatorService struct {
@@ -105,41 +111,118 @@ func (a *AggregatorService) recordLogs() error {
 	return nil
 }
 
+func ensureUTF8(b []byte) []byte {
+    if utf8.Valid(b) {
+        return b
+    }
+
+    reader := transform.NewReader(bytes.NewReader(b), charmap.Windows1252.NewDecoder())
+    converted, err := io.ReadAll(reader)
+    if err != nil {
+        out := make([]rune, 0, len(b))
+        for len(b) > 0 {
+            r, size := utf8.DecodeRune(b)
+            if r == utf8.RuneError && size == 1 {
+                out = append(out, '�')
+                b = b[1:]
+            } else {
+                out = append(out, r)
+                b = b[size:]
+            }
+        }
+        return []byte(string(out))
+    }
+    return converted
+}
+
 func (a *AggregatorService) mergeClosedLogs(ctx context.Context) error {
-	errChan := make(chan error,1 )
-	ticker := time.NewTicker(time.Minute)
-	go func(){
-		for {
-			select {
-				case <-ticker.C:
-				fmt.Println("merging closed files")
-				dirName := fmt.Sprintf("%s-logs", a.host)
-				entries , err := os.ReadDir(dirName)
-				if err != nil {
-					errChan<- fmt.Errorf("failed to read %s entires: %s" , dirName , err.Error())
-				}
-				for _ , entry := range entries {
-					fmt.Println(entry.Name())
-					_ , ok := a.openedFiles[entry.Name()]
-					if !ok {
-						fmt.Println("closed  file")
-					}
-				}
-				case <-ctx.Done():
-					return
-			}
-		}
-	}()
-	for {
-		select {
-			case err := <-errChan:
-				if err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
-		}
-	}
+    errChan := make(chan error, 1)
+    ticker := time.NewTicker(time.Hour * 12)
+
+    go func() {
+        defer ticker.Stop()
+
+        for {
+            select {
+            case <-ticker.C:
+                dirName := fmt.Sprintf("%s-logs", a.host)
+                entries, err := os.ReadDir(dirName)
+                if err != nil {
+                    select { case errChan <- fmt.Errorf("failed to read %s entries: %w", dirName, err): default: }
+                    continue
+                }
+
+                filesByContainer := make(map[string][]string)
+
+                for _, entry := range entries {
+                    if entry.IsDir() {
+                        continue
+                    }
+                    if _, ok := a.openedFiles[entry.Name()]; ok {
+                        continue
+                    }
+
+                    cleanName := strings.TrimSuffix(entry.Name(), ".log")
+                    parts := strings.Split(cleanName, "-")
+                    if len(parts) < 4 {
+                        fmt.Printf("skipping invalid log name: %s", entry.Name())
+                        continue
+                    }
+
+                    cname := strings.TrimSuffix(parts[3], ".")
+                    filesByContainer[cname] = append(filesByContainer[cname],
+                        filepath.Join(dirName, entry.Name()))
+                }
+
+                for cname, paths := range filesByContainer {
+                    var mergedContent []byte
+
+                    for _, fullPath := range paths {
+                        data, err := os.ReadFile(fullPath)
+                        if err != nil {
+                            select { case errChan <- fmt.Errorf("failed to read %s: %w", fullPath, err): default: }
+                            continue
+                        }
+
+                        utf8Data := ensureUTF8(data)
+                        mergedContent = append(mergedContent, utf8Data...)
+
+                        if err := os.Remove(fullPath); err != nil {
+                            select { case errChan <- fmt.Errorf("failed to remove %s: %w", fullPath, err): default: }
+                        }
+                    }
+
+                    mergedFile := fmt.Sprintf("%s-logs/%s-%s.log", a.host, time.Now().Format(time.DateOnly), cname)
+
+                    f, err := os.OpenFile(mergedFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+                    if err != nil {
+                        select { case errChan <- fmt.Errorf("failed to open merged file %s: %w", mergedFile, err): default: }
+                        continue
+                    }
+                    if _, err := f.Write(mergedContent); err != nil {
+                        select { case errChan <- fmt.Errorf("failed to write to %s: %w", mergedFile, err): default: }
+                    }
+                    f.Close()
+                }
+                fmt.Println("merged successfully with UTF-8 encoding")
+
+            case <-ctx.Done():
+                fmt.Println("Stopping mergeClosedLogs")
+                return
+            }
+        }
+    }()
+
+    for {
+        select {
+        case err := <-errChan:
+            if err != nil {
+                return err
+            }
+        case <-ctx.Done():
+            return ctx.Err()
+        }
+    }
 }
 
 func (a *AggregatorService) loadLog() error {
