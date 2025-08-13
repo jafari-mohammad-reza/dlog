@@ -167,7 +167,7 @@ outer:
 									}
 								}()
 								go func() {
-									err := w.trackResourceUsage(ctx)
+									err := w.trackResourceUsage(containerCtx)
 									if err != nil {
 										fmt.Printf("failed to track resource usage for container %s: %v", name, err)
 									}
@@ -280,7 +280,7 @@ func (w *Watcher) registerCns(ctx context.Context) error {
 					}
 				}()
 				go func() {
-					err := w.trackResourceUsage(ctx)
+					err := w.trackResourceUsage(containerCtx)
 					if err != nil {
 						fmt.Printf("failed to track resource usage for container %s: %v", name, err)
 					}

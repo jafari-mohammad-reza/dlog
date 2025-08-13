@@ -46,30 +46,31 @@ func main() {
 			endTimer := time.NewTimer(cfg.RunScheduleTime.End)
 			go func() {
 				select {
-					case <-ctx.Done():
-						timer.Stop()
-						endTimer.Stop()
-					case <-timer.C:
-						fmt.Println("start")
-						start(ctx, cfg)
-					case <-endTimer.C:
-						fmt.Println("end")
-						stop()
-				}
-			}()
-		}else {
-			select {
 				case <-ctx.Done():
 					timer.Stop()
+					endTimer.Stop()
 				case <-timer.C:
 					fmt.Println("start")
 					start(ctx, cfg)
-			}}
+				case <-endTimer.C:
+					fmt.Println("end")
+					stop()
+				}
+			}()
+		} else {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+			case <-timer.C:
+				fmt.Println("start")
+				start(ctx, cfg)
+			}
+		}
 	} else {
 		start(ctx, cfg)
 	}
 }
-func start(ctx context.Context , cfg *conf.Config) {
+func start(ctx context.Context, cfg *conf.Config) {
 	go func() {
 		if err := healthCheck(cfg); err != nil {
 			os.Exit(1)
@@ -87,7 +88,7 @@ func healthCheck(cfg *conf.Config) error {
 		w.Write([]byte("healthy"))
 	})
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", cfg.HealthCheckPort), nil); err != nil {
-		fmt.Println("failed to start healthpeak")
+		fmt.Printf("failed to start healthpeak: %v\n", err)
 		return err
 	}
 	return nil
