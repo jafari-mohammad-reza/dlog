@@ -108,7 +108,7 @@ func (a *AggregatorService) recordCrashes() error {
 			return err
 		}
 
-		cleanLog := stripANSIAndControlChars(record.Log)
+		cleanLog := stripANSIAndControlChars(string(record.Log))
 		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateTime), ensureUTF8([]byte(cleanLog))); err != nil {
 			file.Close()
 			log.Printf("Failed to write crash log for %s: %v\n", record.ContainerName, err)
@@ -200,7 +200,7 @@ func (a *AggregatorService) recordLogs() error {
 			f = file
 		}
 		file = f
-		cleanLog := stripANSIAndControlChars(record.Log)
+		cleanLog := stripANSIAndControlChars(string(record.Log))
 		if _, err := fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.DateTime), ensureUTF8([]byte(cleanLog))); err != nil {
 			log.Printf("Failed to write log for %s: %v\n", record.ContainerName, err)
 			return err

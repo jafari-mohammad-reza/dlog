@@ -52,6 +52,7 @@ func (ws *WatcherService) Start(ctx context.Context) error {
 }
 
 type Watcher struct {
+	cfg         *conf.Config
 	Host        conf.Host
 	dc          *client.Client
 	tracked     map[string]context.CancelFunc
@@ -69,6 +70,7 @@ func NewWatcher(cfg *conf.Config, host conf.Host) *Watcher {
 	crashChan := make(chan conf.RecordLog, 1000)
 	statChan := make(chan conf.StatLog, 1000)
 	return &Watcher{
+		cfg:         cfg,
 		Host:        host,
 		tracked:     make(map[string]context.CancelFunc),
 		trackedChan: trackedChan,
@@ -199,7 +201,7 @@ outer:
 							}
 							w.crashedChan <- conf.RecordLog{
 								ContainerName: name,
-								Log:           string(cl),
+								Log:           cl,
 							}
 						}
 						if cancel, exists := w.tracked[name]; exists {
@@ -232,7 +234,7 @@ func (w *Watcher) trackResourceUsage(ctx context.Context) error {
 	for id, _ := range w.tracked {
 		stats, err := w.dc.ContainerStats(ctx, id, true)
 		if err != nil {
-			fmt.Printf("failed to fetch container stats for %s: %s", id, err.Error())
+			fmt.Printf("failed to fetch container stats for %s: %s\n", id, err.Error())
 			continue
 		}
 		scanner := bufio.NewScanner(stats.Body)
@@ -240,7 +242,7 @@ func (w *Watcher) trackResourceUsage(ctx context.Context) error {
 			var stat conf.ContainerStats
 			err := json.Unmarshal(scanner.Bytes(), &stat)
 			if err != nil {
-				fmt.Printf("failed to unmarshal container stats for %s: %s", id, err.Error())
+				fmt.Printf("failed to unmarshal container stats for %s: %s\n", id, err.Error())
 				continue
 			}
 			statLog := conf.StatLog{
@@ -250,7 +252,7 @@ func (w *Watcher) trackResourceUsage(ctx context.Context) error {
 				ContainerID:   stat.ID,
 			}
 			w.statChan <- statLog
-			time.Sleep(time.Second * 10)
+			time.Sleep(time.Minute * time.Duration(w.cfg.StatInterval))
 		}
 	}
 	return nil
@@ -261,7 +263,7 @@ func (w *Watcher) registerCns(ctx context.Context) error {
 		Before: time.Now().Format(time.DateTime),
 	})
 	if err != nil {
-		fmt.Printf("failed to fetch containers list %s", err.Error())
+		fmt.Printf("failed to fetch containers list %s\n", err.Error())
 		return err
 	}
 
@@ -276,13 +278,13 @@ func (w *Watcher) registerCns(ctx context.Context) error {
 			go func(containerID, containerName string) {
 				defer func() {
 					if r := recover(); r != nil {
-						fmt.Printf("panic in streamClog for container %s: %v", containerID, r)
+						fmt.Printf("panic in streamClog for container %s: %v\n", containerID, r)
 					}
 				}()
 				go func() {
 					err := w.trackResourceUsage(containerCtx)
 					if err != nil {
-						fmt.Printf("failed to track resource usage for container %s: %v", name, err)
+						fmt.Printf("failed to track resource usage for container %s: %v\n", name, err)
 					}
 				}()
 				w.streamClog(containerCtx, conf.StreamOpts{
@@ -334,7 +336,7 @@ func (w *Watcher) streamClog(ctx context.Context, cn conf.StreamOpts) {
 	}
 
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := scanner.Bytes()
 		w.recordChan <- conf.RecordLog{
 			ContainerName: name,
 			Log:           line,

@@ -15,12 +15,13 @@ type Config struct {
 	HealthCheckPort int    `mapstructure:"health_port"`
 	Timeout         string `mapstructure:"timeout"`
 	TimeoutDuration time.Duration
-	RunSchedule struct{
+	RunSchedule     struct {
 		Start string `mapstructure:"start"`
 		End   string `mapstructure:"end"`
 	} `mapstructure:"run_schedule"`
 	RunScheduleTime RunSchedule `mapstructure:"run_schedule"`
-	Hosts           []Host `mapstructure:"hosts"`
+	Hosts           []Host      `mapstructure:"hosts"`
+	StatInterval    int         `mapstructure:"stat_interval"`
 }
 type RunSchedule struct {
 	Start time.Duration
@@ -42,6 +43,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("hosts.name", "localhost")
 	v.SetDefault("hosts.address", "unix:///var/run/docker.sock")
 	v.SetDefault("hosts.method", "socket")
+	v.SetDefault("hosts.stat_interval", 30)
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 			fmt.Println("Config file not found, using defaults or environment variables.")
@@ -80,22 +82,22 @@ func NewConfig() (*Config, error) {
 	}
 
 	if cfg.RunSchedule.Start != "" {
-    startTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.Start)
-    if err != nil {
-        return nil, fmt.Errorf("invalid start time: %v", err)
-    }
+		startTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.Start)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start time: %v", err)
+		}
 
-    cfg.RunScheduleTime.Start = time.Duration(startTime.Hour())*time.Hour +
-                               time.Duration(startTime.Minute())*time.Minute
+		cfg.RunScheduleTime.Start = time.Duration(startTime.Hour())*time.Hour +
+			time.Duration(startTime.Minute())*time.Minute
 
-        endTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.End)
-        if err != nil {
-            return nil, fmt.Errorf("invalid end time: %v", err)
-        }
+		endTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.End)
+		if err != nil {
+			return nil, fmt.Errorf("invalid end time: %v", err)
+		}
 
-        cfg.RunScheduleTime.End = time.Duration(endTime.Hour())*time.Hour +
-                                 time.Duration(endTime.Minute())*time.Minute
-    }
+		cfg.RunScheduleTime.End = time.Duration(endTime.Hour())*time.Hour +
+			time.Duration(endTime.Minute())*time.Minute
+	}
 
 	return &cfg, nil
 }
