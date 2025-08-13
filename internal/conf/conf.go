@@ -78,19 +78,24 @@ func NewConfig() (*Config, error) {
 		}
 		cfg.TimeoutDuration = dur
 	}
+
 	if cfg.RunSchedule.Start != "" {
-		start, err := time.ParseDuration( cfg.RunSchedule.Start)
-		if err != nil {
-			return nil, errors.New("invalid start time")
-		}
-		cfg.RunScheduleTime.Start = start
-		if cfg.RunSchedule.End != "" {
-			end, err := time.ParseDuration( cfg.RunSchedule.End)
-			if err != nil {
-				return nil, errors.New("invalid end time")
-			}
-			cfg.RunScheduleTime.End = end
-		}
-	}
+    startTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.Start)
+    if err != nil {
+        return nil, fmt.Errorf("invalid start time: %v", err)
+    }
+
+    cfg.RunScheduleTime.Start = time.Duration(startTime.Hour())*time.Hour +
+                               time.Duration(startTime.Minute())*time.Minute
+
+        endTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.End)
+        if err != nil {
+            return nil, fmt.Errorf("invalid end time: %v", err)
+        }
+
+        cfg.RunScheduleTime.End = time.Duration(endTime.Hour())*time.Hour +
+                                 time.Duration(endTime.Minute())*time.Minute
+    }
+
 	return &cfg, nil
 }
