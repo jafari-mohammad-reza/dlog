@@ -208,12 +208,12 @@ func (w *Watcher) watchContainers(ctx context.Context) error {
 }
 
 func (w *Watcher) trackResourceUsage(ctx context.Context) error {
-	for _, cn := range w.tracked {
-		// w.dc.ContainerStats(ctx context.Context, containerID string, stream bool)
-		// log current cpu , memory and network usage
-		// show maximum usage
-		// show average usage
-	}
+	// for _, cn := range w.tracked {
+	// 	// w.dc.ContainerStats(ctx context.Context, containerID string, stream bool)
+	// 	// log current cpu , memory and network usage
+	// 	// show maximum usage
+	// 	// show average usage
+	// }
 	return nil
 }
 func (w *Watcher) registerCns(ctx context.Context) error {
