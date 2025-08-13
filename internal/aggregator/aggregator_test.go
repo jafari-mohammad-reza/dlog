@@ -9,10 +9,11 @@ import (
 	"time"
 )
 
+// TODO: fix failing test and write test for crash listener
 func TestAggregator_recordLogs(t *testing.T) {
 	cfg := &conf.Config{}
 	recordChan := make(chan conf.RecordLog, 1)
-	ag := NewAggregatorService(cfg, "localhost", nil, recordChan)
+	ag := NewAggregatorService(cfg, "localhost", nil, recordChan , nil,nil)
 
 	go func() {
 		recordChan <- conf.RecordLog{
@@ -26,7 +27,7 @@ func TestAggregator_recordLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recordLogs failed: %v", err)
 	}
-	if err := os.MkdirAll("localhost-logs",0644); err != nil {
+	if err := os.MkdirAll("localhost-logs", 0644); err != nil {
 		t.Fatalf("failed to create logs directory: %v", err)
 	}
 	logFile := path.Join("localhost-logs", time.Now().Format(time.DateOnly)+"-test-record.log")
@@ -42,7 +43,7 @@ func TestAggregator_recordLogs(t *testing.T) {
 
 func TestAggregator_loadLog(t *testing.T) {
 	cfg := &conf.Config{}
-	ag := NewAggregatorService(cfg, "localhost", nil, nil)
+	ag := NewAggregatorService(cfg, "localhost", nil, nil , nil,nil)
 
 	os.Mkdir("localhost-logs", 0777)
 	defer os.RemoveAll("localhost-logs")
@@ -61,7 +62,7 @@ func TestAggregator_loadLog(t *testing.T) {
 
 func TestAggregator_cleanup(t *testing.T) {
 	cfg := &conf.Config{}
-	ag := NewAggregatorService(cfg, "localhost", nil, nil)
+	ag := NewAggregatorService(cfg, "localhost", nil, nil , nil,nil)
 
 	oldDate := time.Now().Add(-48 * time.Hour).Format(time.DateOnly)
 	fileName := oldDate + "-test-cleanup"
@@ -81,7 +82,7 @@ func TestAggregator_cleanup(t *testing.T) {
 func TestAggregator_watchDirs_cancel(t *testing.T) {
 	cfg := &conf.Config{}
 	trackedChan := make(chan conf.TrackedOption)
-	ag := NewAggregatorService(cfg, "localhost", trackedChan, nil)
+	ag := NewAggregatorService(cfg, "localhost", trackedChan, nil , nil,nil)
 
 	os.Mkdir("localhost-logs", 0777)
 	defer os.RemoveAll("localhost-logs")

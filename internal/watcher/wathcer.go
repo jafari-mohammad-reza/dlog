@@ -5,6 +5,7 @@ import (
 	"context"
 	"dlog/internal/aggregator"
 	"dlog/internal/conf"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -57,6 +58,7 @@ type Watcher struct {
 	trackedChan chan conf.TrackedOption
 	recordChan  chan conf.RecordLog
 	crashedChan chan conf.RecordLog
+	statChan    chan conf.StatLog
 	mu          sync.Mutex
 	ag          *aggregator.AggregatorService
 }
@@ -65,14 +67,16 @@ func NewWatcher(cfg *conf.Config, host conf.Host) *Watcher {
 	trackedChan := make(chan conf.TrackedOption, 100)
 	recordChan := make(chan conf.RecordLog, 1000)
 	crashChan := make(chan conf.RecordLog, 1000)
+	statChan := make(chan conf.StatLog, 1000)
 	return &Watcher{
 		Host:        host,
 		tracked:     make(map[string]context.CancelFunc),
 		trackedChan: trackedChan,
 		recordChan:  recordChan,
 		crashedChan: crashChan,
+		statChan:statChan,
 		mu:          sync.Mutex{},
-		ag:          aggregator.NewAggregatorService(cfg, host.Name, trackedChan, recordChan, crashChan),
+		ag:          aggregator.NewAggregatorService(cfg, host.Name, trackedChan, recordChan, crashChan,statChan),
 	}
 }
 func (w *Watcher) Start(ctx context.Context) error {
@@ -124,24 +128,33 @@ func (w *Watcher) closeDc() error {
 }
 
 func (w *Watcher) watchContainers(ctx context.Context) error {
+outer:
 	for {
 		eventChan, errChan := w.dc.Events(ctx, events.ListOptions{})
 
 		for {
 			select {
-			case err := <-errChan:
+			case err, ok := <-errChan:
+				if !ok {
+					fmt.Println("error channel closed")
+					break outer
+				}
 				if err != nil {
-					fmt.Printf("failed to process docker event: %v\n", err)
+					fmt.Printf("failed to process docker event: %v", err)
 				} else {
 					fmt.Println("docker event channel closed")
 				}
-				goto reconnect
+				break outer
 
-			case event := <-eventChan:
+			case event, ok := <-eventChan:
+				if !ok {
+					fmt.Println("event channel closed")
+					break outer
+				}
+
 				if event.Type == "container" {
 					w.mu.Lock()
 					name := event.Actor.Attributes["name"]
-
 					switch event.Action {
 					case "start":
 						if _, ok := w.tracked[name]; !ok {
@@ -151,6 +164,12 @@ func (w *Watcher) watchContainers(ctx context.Context) error {
 								defer func() {
 									if r := recover(); r != nil {
 										fmt.Printf("panic in streamClog for container %s: %v", name, r)
+									}
+								}()
+								go func() {
+									err := w.trackResourceUsage(ctx)
+									if err != nil {
+										fmt.Printf("failed to track resource usage for container %s: %v", name, err)
 									}
 								}()
 								w.streamClog(containerCtx, conf.StreamOpts{
@@ -167,13 +186,16 @@ func (w *Watcher) watchContainers(ctx context.Context) error {
 								ShowStderr: true,
 							})
 							if err != nil {
-								fmt.Printf("failed to get container logs for %s: %v\n", name, err)
+								fmt.Printf("failed to get container logs for %s: %v", name, err)
+								w.mu.Unlock()
 								continue
 							}
 							cl, err := io.ReadAll(clog)
+							clog.Close()
 							if err != nil {
-								fmt.Printf("failed to read container logs for %s: %v\n", name, err)
-								continue
+								fmt.Printf("failed to read container logs for %s: %v", name, err)
+								w.mu.Unlock()
+								break outer
 							}
 							w.crashedChan <- conf.RecordLog{
 								ContainerName: name,
@@ -200,13 +222,47 @@ func (w *Watcher) watchContainers(ctx context.Context) error {
 				return nil
 			}
 		}
-
-	reconnect:
+	}
 		time.Sleep(2 * time.Second)
 		fmt.Println("Reconnecting to Docker events...")
-	}
+		return nil
 }
 
+
+func (w *Watcher) trackResourceUsage(ctx context.Context) error {
+	fmt.Printf("len(w.tracked): %v\n", len(w.tracked))
+	for id, _ := range w.tracked {
+		fmt.Printf("id: %v\n", id)
+		stats , err := w.dc.ContainerStats(ctx, id, true)
+		if err != nil {
+			fmt.Printf("failed to fetch container stats for %s: %s", id, err.Error())
+			continue
+		}
+		scanner := bufio.NewScanner(stats.Body)
+		for  scanner.Scan() {
+			var stat conf.ContainerStats
+			err := json.Unmarshal(scanner.Bytes(), &stat)
+			if err != nil {
+				fmt.Printf("failed to unmarshal container stats for %s: %s", id, err.Error())
+				continue
+			}
+			statLog := conf.StatLog{
+				CpuUsage: stat.CPUStats.CPUUsage.TotalUsage,
+				MemUsage: stat.MemoryStats.Usage,
+				ContainerName: id,
+				ContainerID: stat.ID,
+			}
+			fmt.Printf("statLog: %v\n", statLog)
+			w.statChan <- statLog
+			time.Sleep(time.Second*10)
+		}
+
+		// log current cpu , memory and network usage
+		// show maximum usage
+		// show average usage
+	}
+	return nil
+}
 func (w *Watcher) registerCns(ctx context.Context) error {
 	cl, err := w.dc.ContainerList(ctx, container.ListOptions{
 		Latest: true,
@@ -231,7 +287,12 @@ func (w *Watcher) registerCns(ctx context.Context) error {
 						fmt.Printf("panic in streamClog for container %s: %v", containerID, r)
 					}
 				}()
-
+				go func() {
+					err := w.trackResourceUsage(ctx)
+					if err != nil {
+						fmt.Printf("failed to track resource usage for container %s: %v", name, err)
+					}
+				}()
 				w.streamClog(containerCtx, conf.StreamOpts{
 					Name: containerName,
 					ID:   containerID,

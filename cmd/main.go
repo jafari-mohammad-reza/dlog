@@ -40,7 +40,36 @@ func main() {
 			}
 		}()
 	}
-
+	if cfg.RunScheduleTime.Start > 0 {
+		timer := time.NewTimer(cfg.RunScheduleTime.Start)
+		if cfg.RunScheduleTime.End > 0 {
+			endTimer := time.NewTimer(cfg.RunScheduleTime.End)
+			go func() {
+				select {
+					case <-ctx.Done():
+						timer.Stop()
+						endTimer.Stop()
+					case <-timer.C:
+						fmt.Println("start")
+						start(ctx, cfg)
+					case <-endTimer.C:
+						fmt.Println("end")
+						stop()
+				}
+			}()
+		}else {
+			select {
+				case <-ctx.Done():
+					timer.Stop()
+				case <-timer.C:
+					fmt.Println("start")
+					start(ctx, cfg)
+			}}
+	} else {
+		start(ctx, cfg)
+	}
+}
+func start(ctx context.Context , cfg *conf.Config) {
 	go func() {
 		if err := healthCheck(cfg); err != nil {
 			os.Exit(1)

@@ -15,7 +15,16 @@ type Config struct {
 	HealthCheckPort int    `mapstructure:"health_port"`
 	Timeout         string `mapstructure:"timeout"`
 	TimeoutDuration time.Duration
+	RunSchedule struct{
+		Start string `mapstructure:"start"`
+		End   string `mapstructure:"end"`
+	} `mapstructure:"run_schedule"`
+	RunScheduleTime RunSchedule `mapstructure:"run_schedule"`
 	Hosts           []Host `mapstructure:"hosts"`
+}
+type RunSchedule struct {
+	Start time.Duration
+	End   time.Duration
 }
 
 type Host struct {
@@ -69,5 +78,24 @@ func NewConfig() (*Config, error) {
 		}
 		cfg.TimeoutDuration = dur
 	}
+
+	if cfg.RunSchedule.Start != "" {
+    startTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.Start)
+    if err != nil {
+        return nil, fmt.Errorf("invalid start time: %v", err)
+    }
+
+    cfg.RunScheduleTime.Start = time.Duration(startTime.Hour())*time.Hour +
+                               time.Duration(startTime.Minute())*time.Minute
+
+        endTime, err := time.Parse("2006/01/02 15:04", cfg.RunSchedule.End)
+        if err != nil {
+            return nil, fmt.Errorf("invalid end time: %v", err)
+        }
+
+        cfg.RunScheduleTime.End = time.Duration(endTime.Hour())*time.Hour +
+                                 time.Duration(endTime.Minute())*time.Minute
+    }
+
 	return &cfg, nil
 }
