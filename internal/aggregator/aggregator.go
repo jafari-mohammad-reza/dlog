@@ -28,9 +28,15 @@ type AggregatorService struct {
 	trackedChan chan conf.TrackedOption
 	recordChan  chan conf.RecordLog
 	crashChan   chan conf.RecordLog
+	statChan    chan conf.StatLog
+	statMap     map[string]*StatEntry
+}
+type StatEntry struct {
+	Stats []conf.StatLog
+	File  *os.File
 }
 
-func NewAggregatorService(cfg *conf.Config, host string, trackedChan chan conf.TrackedOption, recordChan chan conf.RecordLog, crashChan chan conf.RecordLog) *AggregatorService {
+func NewAggregatorService(cfg *conf.Config, host string, trackedChan chan conf.TrackedOption, recordChan chan conf.RecordLog, crashChan chan conf.RecordLog, statChan chan conf.StatLog) *AggregatorService {
 	return &AggregatorService{
 		cfg:         cfg,
 		host:        host,
@@ -38,6 +44,8 @@ func NewAggregatorService(cfg *conf.Config, host string, trackedChan chan conf.T
 		trackedChan: trackedChan,
 		recordChan:  recordChan,
 		crashChan:   crashChan,
+		statChan:    statChan,
+		statMap:     make(map[string]*StatEntry),
 	}
 }
 func (a *AggregatorService) Start(ctx context.Context) chan error {
@@ -68,6 +76,12 @@ func (a *AggregatorService) Start(ctx context.Context) chan error {
 	}()
 	go func() {
 		err := a.recordLogs()
+		if err != nil {
+			errChan <- err
+		}
+	}()
+	go func() {
+		err := a.recordStats()
 		if err != nil {
 			errChan <- err
 		}
@@ -109,6 +123,58 @@ func (a *AggregatorService) recordCrashes() error {
 
 		if err := file.Close(); err != nil {
 			log.Printf("Failed to close crash log file for %s: %v\n", record.ContainerName, err)
+			return err
+		}
+	}
+	return nil
+}
+func (a *AggregatorService) recordStats() error {
+	for stat := range a.statChan {
+		var maxCpu uint64
+		var maxMem uint64
+		entries, exists := a.statMap[stat.ContainerName]
+		if exists {
+			entries.Stats = append(entries.Stats, stat)
+			if len(entries.Stats) > 0 {
+				var cpuSum uint64
+				var memSum uint64
+				for _, st := range entries.Stats {
+					if maxCpu < st.CpuUsage {
+						maxCpu = st.CpuUsage
+					}
+					if maxMem < st.MemUsage {
+						maxMem = st.MemUsage
+					}
+					cpuSum += st.CpuUsage
+					memSum += st.MemUsage
+				}
+			}
+		} else {
+			a.statMap[stat.ContainerName] = &StatEntry{
+				Stats: []conf.StatLog{stat},
+				File:  nil,
+			}
+			maxCpu = stat.CpuUsage
+			maxMem = stat.MemUsage
+		}
+		dirName := fmt.Sprintf("%s_stats", a.host)
+		if err := os.MkdirAll(dirName, 0755); err != nil {
+			log.Printf("Failed to create stats directory: %v\n", err)
+			return err
+		}
+		f, err := os.OpenFile(path.Join(dirName, fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), stat.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("Failed to open stats log file for %s: %v\n", stat.ContainerName, err)
+			return err
+		}
+		a.statMap[stat.ContainerName].File = f
+
+		if _, err := fmt.Fprintf(f, "[%s] Mem usage: %d - CPU usage: %d - MaxMem: %d - MaxCPU: %d\n", time.Now().Format(time.DateTime), stat.MemUsage, stat.CpuUsage, maxCpu, maxMem); err != nil {
+			log.Printf("Failed to write stats log file for %s: %v\n", stat.ContainerName, err)
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			log.Printf("Failed to sync log file for %s: %v\n", stat.ContainerName, err)
 			return err
 		}
 	}
