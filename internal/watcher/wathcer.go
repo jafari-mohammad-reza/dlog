@@ -74,9 +74,9 @@ func NewWatcher(cfg *conf.Config, host conf.Host) *Watcher {
 		trackedChan: trackedChan,
 		recordChan:  recordChan,
 		crashedChan: crashChan,
-		statChan:statChan,
+		statChan:    statChan,
 		mu:          sync.Mutex{},
-		ag:          aggregator.NewAggregatorService(cfg, host.Name, trackedChan, recordChan, crashChan,statChan),
+		ag:          aggregator.NewAggregatorService(cfg, host.Name, trackedChan, recordChan, crashChan, statChan),
 	}
 }
 func (w *Watcher) Start(ctx context.Context) error {
@@ -223,23 +223,20 @@ outer:
 			}
 		}
 	}
-		time.Sleep(2 * time.Second)
-		fmt.Println("Reconnecting to Docker events...")
-		return nil
+	time.Sleep(2 * time.Second)
+	fmt.Println("Reconnecting to Docker events...")
+	return nil
 }
 
-
 func (w *Watcher) trackResourceUsage(ctx context.Context) error {
-	fmt.Printf("len(w.tracked): %v\n", len(w.tracked))
 	for id, _ := range w.tracked {
-		fmt.Printf("id: %v\n", id)
-		stats , err := w.dc.ContainerStats(ctx, id, true)
+		stats, err := w.dc.ContainerStats(ctx, id, true)
 		if err != nil {
 			fmt.Printf("failed to fetch container stats for %s: %s", id, err.Error())
 			continue
 		}
 		scanner := bufio.NewScanner(stats.Body)
-		for  scanner.Scan() {
+		for scanner.Scan() {
 			var stat conf.ContainerStats
 			err := json.Unmarshal(scanner.Bytes(), &stat)
 			if err != nil {
@@ -247,19 +244,14 @@ func (w *Watcher) trackResourceUsage(ctx context.Context) error {
 				continue
 			}
 			statLog := conf.StatLog{
-				CpuUsage: stat.CPUStats.CPUUsage.TotalUsage,
-				MemUsage: stat.MemoryStats.Usage,
+				CpuUsage:      stat.CPUStats.CPUUsage.TotalUsage,
+				MemUsage:      stat.MemoryStats.Usage,
 				ContainerName: id,
-				ContainerID: stat.ID,
+				ContainerID:   stat.ID,
 			}
-			fmt.Printf("statLog: %v\n", statLog)
 			w.statChan <- statLog
-			time.Sleep(time.Second*10)
+			time.Sleep(time.Second * 10)
 		}
-
-		// log current cpu , memory and network usage
-		// show maximum usage
-		// show average usage
 	}
 	return nil
 }

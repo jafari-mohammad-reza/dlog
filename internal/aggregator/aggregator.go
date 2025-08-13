@@ -210,7 +210,9 @@ func (a *AggregatorService) recordLogs() error {
 			return err
 		}
 		took := time.Since(startRecord)
-		fmt.Printf("processing %s log took %v\n", record.ContainerName, took)
+		if took > time.Second {
+			fmt.Printf("processing %s log took %v\n", record.ContainerName, took)
+		}
 	}
 	for name, file := range a.openedFiles {
 		if err := file.Close(); err != nil {
