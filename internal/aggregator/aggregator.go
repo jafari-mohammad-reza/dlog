@@ -96,7 +96,7 @@ func (a *AggregatorService) Start(ctx context.Context) chan error {
 }
 func (a *AggregatorService) recordCrashes() error {
 	for record := range a.crashChan {
-		if err := os.MkdirAll(fmt.Sprintf("%s-logs", a.host), 0755); err != nil {
+		if err := os.MkdirAll(path.Join(a.host, "logs"), 0755); err != nil {
 			log.Printf("Failed to create logs directory: %v\n", err)
 			return err
 		}
@@ -130,51 +130,67 @@ func (a *AggregatorService) recordCrashes() error {
 }
 func (a *AggregatorService) recordStats() error {
 	for stat := range a.statChan {
-		var maxCpu uint64
-		var maxMem uint64
 		entries, exists := a.statMap[stat.ContainerName]
-		if exists {
+		var prevStat *conf.StatLog
+		var increaseMemGB, increaseCPU float64
+
+		if exists && len(entries.Stats) > 0 {
+			prevStat = &entries.Stats[len(entries.Stats)-1]
+			increaseMemGB = float64(stat.MemUsage-prevStat.MemUsage) / (1024 * 1024 * 1024)
+			increaseCPU = float64(stat.CpuUsage - prevStat.CpuUsage)
 			entries.Stats = append(entries.Stats, stat)
-			if len(entries.Stats) > 0 {
-				var cpuSum uint64
-				var memSum uint64
-				for _, st := range entries.Stats {
-					if maxCpu < st.CpuUsage {
-						maxCpu = st.CpuUsage
-					}
-					if maxMem < st.MemUsage {
-						maxMem = st.MemUsage
-					}
-					cpuSum += st.CpuUsage
-					memSum += st.MemUsage
-				}
-			}
 		} else {
 			a.statMap[stat.ContainerName] = &StatEntry{
 				Stats: []conf.StatLog{stat},
 				File:  nil,
 			}
-			maxCpu = stat.CpuUsage
-			maxMem = stat.MemUsage
+			increaseMemGB = float64(stat.MemUsage) / (1024 * 1024 * 1024)
+			increaseCPU = float64(stat.CpuUsage)
 		}
-		dirName := fmt.Sprintf("%s_stats", a.host)
-		if err := os.MkdirAll(dirName, 0755); err != nil {
+
+		// Calculate max values
+		var maxCpu, maxMem uint64
+		for _, st := range a.statMap[stat.ContainerName].Stats {
+			if maxCpu < st.CpuUsage {
+				maxCpu = st.CpuUsage
+			}
+			if maxMem < st.MemUsage {
+				maxMem = st.MemUsage
+			}
+		}
+
+		if err := os.MkdirAll(path.Join(a.host, "stats"), 0755); err != nil {
 			log.Printf("Failed to create stats directory: %v\n", err)
 			return err
 		}
-		f, err := os.OpenFile(path.Join(dirName, fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), stat.ContainerName)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		filePath := path.Join("stats", fmt.Sprintf("%s-%s.log", time.Now().Format(time.DateOnly), stat.ContainerName))
+		f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			log.Printf("Failed to open stats log file for %s: %v\n", stat.ContainerName, err)
 			return err
 		}
 		a.statMap[stat.ContainerName].File = f
 
-		if _, err := fmt.Fprintf(f, "[%s] Mem usage: %d - CPU usage: %d - MaxMem: %d - MaxCPU: %d\n", time.Now().Format(time.DateTime), stat.MemUsage, stat.CpuUsage, maxCpu, maxMem); err != nil {
+		memGB := float64(stat.MemUsage) / (1024 * 1024 * 1024)
+		maxMemGB := float64(maxMem) / (1024 * 1024 * 1024)
+
+		logLine := fmt.Sprintf(
+			"[%s] Mem: %.2f GB (Δ %.2f GB) | CPU: %.2f (Δ %.2f) | MaxMem: %.2f GB | MaxCPU: %d\n",
+			time.Now().Format(time.DateTime),
+			memGB,
+			increaseMemGB,
+			float64(stat.CpuUsage),
+			increaseCPU,
+			maxMemGB,
+			maxCpu,
+		)
+
+		if _, err := f.WriteString(logLine); err != nil {
 			log.Printf("Failed to write stats log file for %s: %v\n", stat.ContainerName, err)
 			return err
 		}
 		if err := f.Sync(); err != nil {
-			log.Printf("Failed to sync log file for %s: %v\n", stat.ContainerName, err)
+			log.Printf("Failed to sync stats log file for %s: %v\n", stat.ContainerName, err)
 			return err
 		}
 	}
@@ -187,7 +203,7 @@ func (a *AggregatorService) recordLogs() error {
 		f, ok := a.openedFiles[fmt.Sprintf("%s-%s", time.Now().Format(time.DateOnly), record.ContainerName)]
 		startRecord := time.Now()
 		if !ok {
-			if err := os.MkdirAll(fmt.Sprintf("%s-logs", a.host), 0755); err != nil {
+			if err := os.MkdirAll(path.Join(a.host, "logs"), 0755); err != nil {
 				log.Printf("Failed to create logs directory: %v\n", err)
 				return err
 			}

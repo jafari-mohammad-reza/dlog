@@ -10,7 +10,8 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
 )
-
+// TODO save logs and stats in same dir
+// TODO: merge a same docker swarm service containers logs
 type Config struct {
 	HealthCheckPort int    `mapstructure:"health_port"`
 	Timeout         string `mapstructure:"timeout"`
